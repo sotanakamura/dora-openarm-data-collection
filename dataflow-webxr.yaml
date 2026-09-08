@@ -1,0 +1,243 @@
+# Copyright 2026 Enactic, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+nodes:
+  - id: ui
+    build: pip install -e nodes/dora-openarm-data-collection-ui
+    path: dora-openarm-data-collection-ui
+    env:
+      METADATA_FILE: "metadata.yaml"
+    inputs:
+      tick: dora/timer/secs/1
+      button_a:
+        source: quittable-webxr/button_a
+        queue_size: 100
+      button_b:
+        source: quittable-webxr/button_b
+        queue_size: 100
+      vr_receive_times:
+        source: quittable-webxr/vr_receive_times
+        queue_size: 100
+      arm_status_right:
+        source: follower-right/status
+      arm_status_left:
+        source: follower-left/status
+    outputs:
+      - command
+      - arm_command
+
+  - id: quittable-tick-leader
+    build: pip install -e nodes/dora-openarm-quitter
+    path: dora-openarm-quitter
+    inputs:
+      command: ui/command
+      tick: dora/timer/millis/2
+    outputs:
+      - tick
+
+  - id: webxr
+    build: pip install -e nodes/dora-openarm-webxr
+    path: dora-openarm-webxr
+    env:
+      TLS_CERTIFICATE_FILE: "nodes/dora-openarm-webxr/example/server.crt"
+      TLS_KEY_FILE: "nodes/dora-openarm-webxr/example/server.key"
+      VIEW_CONFIGURATION_FILE: "nodes/dora-openarm-webxr/example/view_camera_stereo.yaml"
+    inputs:
+      tick: quittable-tick-leader/tick
+      camera_head_left:
+        source: camera-head-stereo-splitter/image_0
+        queue_size: 1
+      camera_head_right:
+        source: camera-head-stereo-splitter/image_1
+        queue_size: 1
+    outputs:
+      - pose_right
+      - trigger_right
+      - pose_left
+      - trigger_left
+      - grip_right
+      - grip_left
+      - joystick_x_right
+      - joystick_y_right
+      - joystick_x_left
+      - joystick_y_left
+      - button_a
+      - button_b
+      - button_x
+      - button_y
+      - status
+      - vr_receive_times
+      - pose_reference
+
+  - id: quittable-webxr
+    build: pip install -e nodes/dora-openarm-quitter
+    path: dora-openarm-quitter
+    inputs:
+      command: ui/command
+      pose_right: webxr/pose_right
+      trigger_right: webxr/trigger_right
+      pose_left: webxr/pose_left
+      trigger_left: webxr/trigger_left
+      grip_right: webxr/grip_right
+      grip_left: webxr/grip_left
+      joystick_x_right: webxr/joystick_x_right
+      joystick_y_right: webxr/joystick_y_right
+      joystick_x_left: webxr/joystick_x_left
+      joystick_y_left: webxr/joystick_y_left
+      button_a: webxr/button_a
+      button_b: webxr/button_b
+      button_x: webxr/button_x
+      button_y: webxr/button_y
+      status: webxr/status
+      vr_receive_times: webxr/vr_receive_times
+      pose_reference: webxr/pose_reference
+    outputs:
+      - pose_right
+      - trigger_right
+      - pose_left
+      - trigger_left
+      - grip_right
+      - grip_left
+      - joystick_x_right
+      - joystick_y_right
+      - joystick_x_left
+      - joystick_y_left
+      - button_a
+      - button_b
+      - button_x
+      - button_y
+      - status
+      - vr_receive_times
+      - pose_reference
+
+  - id: ik
+    build: pip install -e nodes/dora-openarm-kinematics
+    path: dora-openarm-ik
+    args: "--mode bimanual --max-iters 10 --dt 0.1 --damping 0.1 --posture-cost 0.01 --lm-damping 0.01"
+    inputs:
+      tick: quittable-tick-leader/tick
+      target_right: quittable-webxr/pose_right
+      target_left: quittable-webxr/pose_left
+      trigger_right: quittable-webxr/trigger_right
+      trigger_left: quittable-webxr/trigger_left
+    outputs:
+      - position_left
+      - position_right
+      - status
+
+  - id: follower-right
+    build: pip install -e nodes/dora-openarm
+    path: dora-openarm
+    args: "--side right --align-trigger gripper --config openarm_pedestal"
+    inputs:
+      request_state: ik/position_right
+      move_position: ik/position_right
+      command: ui/arm_command
+    outputs:
+      - state
+      - status
+
+  - id: follower-left
+    build: pip install -e nodes/dora-openarm
+    path: dora-openarm
+    args: "--side left --align-trigger gripper --config openarm_pedestal"
+    inputs:
+      request_state: ik/position_left
+      move_position: ik/position_left
+      command: ui/arm_command
+    outputs:
+      - state
+      - status
+
+  - id: camera-wrist-right
+    build: pip install opencv-video-capture
+    path: opencv-video-capture
+    env:
+      CAPTURE_PATH: "/dev/camera_wrist_right"
+      ENCODING: "jpeg"
+      IMAGE_HEIGHT: 600
+      IMAGE_WIDTH: 960
+      JPEG_QUALITY: 90
+    inputs:
+      tick: quittable-tick-camera/tick
+    outputs:
+      - image
+
+  - id: camera-wrist-left
+    build: pip install opencv-video-capture
+    path: opencv-video-capture
+    env:
+      CAPTURE_PATH: "/dev/camera_wrist_left"
+      ENCODING: "jpeg"
+      IMAGE_HEIGHT: 600
+      IMAGE_WIDTH: 960
+      JPEG_QUALITY: 90
+    inputs:
+      tick: quittable-tick-camera/tick
+    outputs:
+      - image
+
+  - id: camera-head-stereo
+    build: pip install opencv-video-capture
+    path: opencv-video-capture
+    env:
+      CAPTURE_PATH: "/dev/camera_head_stereo"
+      ENCODING: "bgr8"
+      IMAGE_HEIGHT: 720
+      IMAGE_WIDTH: 2560
+    inputs:
+      tick: quittable-tick-camera/tick
+    outputs:
+      - image
+
+  - id: camera-head-stereo-splitter
+    build: pip install -e nodes/dora-opencv-image-splitter
+    path: dora-opencv-image-splitter
+    env:
+      SPLIT_MODE: "vertical"
+      NUM_SPLITS: 2
+      JPEG_QUALITY: 90
+      IMAGE_HEIGHT: 720
+      IMAGE_WIDTH: 2560
+    inputs:
+      image: camera-head-stereo/image
+    outputs:
+      - image_0
+      - image_1
+
+  - id: quittable-tick-camera
+    build: pip install -e nodes/dora-openarm-quitter
+    path: dora-openarm-quitter
+    inputs:
+      command: ui/command
+      tick: dora/timer/millis/33
+    outputs:
+      - tick
+
+  - id: recorder
+    build: pip install -e nodes/dora-openarm-dataset-recorder
+    path: dora-openarm-dataset-recorder
+    env:
+      METADATA_FILE: "metadata.yaml"
+      DIRECTORY: "webxr_data"
+    inputs:
+      command: ui/command
+      arm_right_action: ik/position_right
+      arm_right_observation: follower-right/state
+      arm_left_action: ik/position_left
+      arm_left_observation: follower-left/state
+      camera_wrist_right: camera-wrist-right/image
+      camera_wrist_left: camera-wrist-left/image
+      camera_head_left: camera-head-stereo-splitter/image_0
+      camera_head_right: camera-head-stereo-splitter/image_1
